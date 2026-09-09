@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import datetime
 import math
-import io
 
 # Konfigurasi Halaman Web
 st.set_page_config(page_title="Dashboard Analisis FTE, JKN & Kebutuhan Poli", page_icon="🏥", layout="wide")
@@ -39,7 +38,7 @@ list_periode_tersedia = generate_periode_list()
 # --- SIDEBAR: PENGATURAN PARAMETER ---
 st.sidebar.header("⚙️ Pengaturan Standar & Kapasitas")
 jumlah_peserta_faskes = st.sidebar.number_input("Total Peserta JKN (Default/Global):", min_value=500, max_value=500000, value=7873, step=500)
-standar_rasio = st.sidebar.number_input("Standar Rasio Peserta per Dokter:", min_value=1000, max_value=10000, value=5000, step=500)
+standar_rasio = st.sidebar.number_input("Standar Target Rasio JKN:", min_value=1000, max_value=10000, value=5000, step=500)
 standar_jam_fulltime_mingguan = st.sidebar.number_input("Standar Jam Full-Time / Minggu:", min_value=20, max_value=50, value=40)
 
 st.sidebar.markdown("---")
@@ -222,17 +221,24 @@ if len(st.session_state.database_kehadiran) > 0:
         st.markdown(f"**Pengaturan Khusus untuk Faskes: `{filter_faskes}`**")
         peserta_aktif = st.number_input(f"Masukkan Total Peserta JKN untuk {filter_faskes}:", min_value=100, max_value=500000, value=jumlah_peserta_faskes, step=500)
 
-    # --- KALKULASI FTE & GAP ANALYSIS ---
+    # --- KALKULASI FTE & RASIO (1 : Sekian) ---
     total_jam_filter = df_tampil["Total Jam Praktek"].sum()
     headcount_filter = df_tampil["Nama Dokter"].nunique()
     fte_filter = round(total_jam_filter / standar_jam_fulltime_mingguan, 2)
     
+    # 1. Rasio Berdasarkan Headcount (Orang Fisik): Peserta / Headcount
+    rasio_headcount_val = int(round(peserta_aktif / headcount_filter)) if headcount_filter > 0 else 0
+    str_rasio_headcount = f"1 : {rasio_headcount_val:,}"
+
+    # 2. Rasio Berdasarkan Tenaga Riil (FTE): Peserta / FTE
+    rasio_fte_val = int(round(peserta_aktif / fte_filter)) if fte_filter > 0 else 0
+    str_rasio_fte = f"1 : {rasio_fte_val:,}"
+
     dokter_ideal_jkn = round(peserta_aktif / standar_rasio, 2)
     gap_fte = round(max(0.0, dokter_ideal_jkn - fte_filter), 2)
     gap_jam_mingguan = round(gap_fte * standar_jam_fulltime_mingguan, 1)
     tambahan_dokter_bulat = math.ceil(gap_fte)
 
-    # Status Evaluasi Keseluruhan Faskes
     status_evaluasi_keseluruhan = "Memadai ✅" if fte_filter >= dokter_ideal_jkn else "Defisit Tenaga (Kurang) ⚠️"
 
     # Deteksi Kebutuhan Poli Simultan
@@ -253,8 +259,18 @@ if len(st.session_state.database_kehadiran) > 0:
                     max_poli_simultan = maks_hari_ini
 
     st.markdown("---")
-    st.markdown(f"### 📊 Analisis Kapasitas Riil & Kesenjangan (*Gap Analysis*)")
+    st.markdown(f"### 📊 Analisis Rasio JKN & Kapasitas Riil (*Gap Analysis*)")
 
+    # Baris Metrik Pertama (Menampilkan Angka Rasio 1 : Sekian)
+    col_r1, col_r2, col_r3 = st.columns(3)
+    with col_r1:
+        st.metric(label="Rasio Headcount (Berdasarkan Orang)", value=str_rasio_headcount, help="Contoh: 7.873 peserta dibagi 4 orang dokter fisik = 1 : 1.968")
+    with col_r2:
+        st.metric(label="Rasio FTE (Berdasarkan Jam Kerja Riil)", value=str_rasio_fte, help="Angka akurat: Peserta dibagi dengan total jam kerja setara dokter penuh.")
+    with col_r3:
+        st.metric(label="Target Standar Rasio JKN", value=f"1 : {standar_rasio:,}")
+
+    # Baris Metrik Kedua (Evaluasi Tenaga)
     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
     with col_f1:
         st.metric(label="Jumlah Orang (Headcount)", value=f"{headcount_filter} Orang")
@@ -308,22 +324,23 @@ if len(st.session_state.database_kehadiran) > 0:
     else:
         st.info("Tidak ada data yang cocok dengan filter tersebut.")
     
-    # --- FITUR DOWNLOAD LAPORAN EKSEKUTIF (RINGKASAN + KESIMPULAN) ---
+    # --- FITUR DOWNLOAD LAPORAN EKSEKUTIF ---
     st.markdown("---")
     st.subheader("📥 Export Laporan Analisis Lengkap")
-    st.markdown("Tombol di bawah ini akan mendownload laporan ringkasan eksekutif beserta kesimpulan status rasio JKN dan kebutuhan poli faskes.")
 
-    # Membuat format ringkasan teks untuk didownload
     ringkasan_laporan = f"""LAPORAN ANALISIS BEBAN KERJA, RASIO JKN & KEBUTUHAN POLI
 ==================================================
 Filter Periode : {filter_periode}
 Filter Faskes  : {filter_faskes}
 Total Peserta JKN : {peserta_aktif:,} Jiwa
 
-RINGKASAN KAPASITAS KESELURUHAN:
+RINGKASAN RASIO & KAPASITAS:
+- Rasio Headcount (Orang Fisik)   : {str_rasio_headcount}
+- Rasio FTE (Jam Kerja Riil)      : {str_rasio_fte}
+- Target Standar Rasio JKN        : 1 : {standar_rasio:,}
 - Jumlah Orang (Headcount) Dokter : {headcount_filter} Orang
 - Kekuatan Tenaga Riil (FTE)      : {fte_filter} FTE
-- Kebutuhan Ideal JKN (Rasio 1:{standar_rasio}) : {dokter_ideal_jkn} FTE
+- Kebutuhan Ideal JKN             : {dokter_ideal_jkn} FTE
 - Status Evaluasi Keseluruhan     : {status_evaluasi_keseluruhan}
 - Kekurangan (Defisit) FTE        : {gap_fte} FTE (Butuh tambahan ~{tambahan_dokter_bulat} dokter / {gap_jam_mingguan} jam/minggu)
 - Kebutuhan Unit Poli Simultan    : Minimal {max_poli_simultan} Unit Poli Aktif
@@ -331,7 +348,6 @@ RINGKASAN KAPASITAS KESELURUHAN:
 ==================================================
 RINCIAN JADWAL PRAKTEK:
 """
-    # Ubah tabel rincian menjadi teks CSV juga untuk digabung dalam laporan
     csv_tabel = df_tampil_clean.to_csv(index=False)
     laporan_final = ringkasan_laporan + "\n" + csv_tabel
 
