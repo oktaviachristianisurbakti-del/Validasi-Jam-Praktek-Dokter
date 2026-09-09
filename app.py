@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import math
 
 # Konfigurasi Halaman Web
 st.set_page_config(page_title="Dashboard Analisis FTE, JKN & Rekomendasi Gap", page_icon="🏥", layout="wide")
@@ -13,6 +14,33 @@ if 'database_kehadiran' not in st.session_state:
 st.title("🏥 Dashboard Analisis Beban Kerja, Rasio JKN & Rekomendasi Penambahan")
 st.markdown("Pusat monitoring kehadiran tenaga medis berbasis konversi FTE, analisis kesenjangan (*Gap Analysis*), dan kapasitas poli faskes.")
 
+# --- GENERATE PILIHAN PERIODE BULAN (Mulai September 2025 ke Masa Depan) ---
+def generate_periode_list():
+    daftar_periode = []
+    # Mulai dari September 2025
+    start_date = datetime.date(2025, 9, 1)
+    # Sampai Desember 2027 (atau bisa terus bertambah)
+    end_date = datetime.date(2027, 12, 31)
+    
+    nama_bulan_indo = {
+        1: "Januari", 2: "Februari", 3: "Maret", 4: "April", 5: "Mei", 6: "Juni",
+        7: "Juli", 8: "Agustus", 9: "September", 10: "Oktober", 11: "November", 12: "Desember"
+    }
+    
+    curr = start_date
+    while curr <= end_date:
+        label = f"{nama_bulan_indo[curr.month]} {curr.year}"
+        daftar_periode.append(label)
+        # Maju ke bulan berikutnya
+        if curr.month == 12:
+            curr = datetime.date(curr.year + 1, 1, 1)
+        else:
+            curr = datetime.date(curr.year, curr.month + 1, 1)
+            
+    return daftar_periode
+
+list_periode_tersedia = generate_periode_list()
+
 # --- SIDEBAR: PENGATURAN PARAMETER ---
 st.sidebar.header("⚙️ Pengaturan Standar & Kapasitas")
 jumlah_peserta_faskes = st.sidebar.number_input("Total Peserta JKN di Faskes Ini:", min_value=500, max_value=100000, value=7873, step=500)
@@ -24,10 +52,6 @@ jumlah_poli_tersedia = st.sidebar.number_input("Jumlah Unit Poli Tersedia di Fas
 jam_operasional_poli_per_hari = st.sidebar.number_input("Jam Operasional Poli per Hari:", min_value=4, max_value=24, value=8, step=1)
 hari_operasional_per_minggu = st.sidebar.number_input("Hari Operasional per Minggu:", min_value=1, max_value=7, value=6, step=1)
 
-pilihan_bulan = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
-tahun_ini = datetime.date.today().year
-pilihan_tahun = list(range(tahun_ini - 2, tahun_ini + 3))
-
 st.sidebar.markdown("---")
 st.sidebar.header("📁 Metode Input Data")
 metode_input = st.sidebar.radio("Pilih cara input:", ["Upload File Excel/CSV", "Input Manual (Form)"])
@@ -37,6 +61,15 @@ pilihan_hari = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 if metode_input == "Upload File Excel/CSV":
     st.sidebar.markdown("---")
     st.sidebar.subheader("📤 Upload Jadwal Massal")
+    st.sidebar.markdown("""
+    **Format Kolom Excel yang Disarankan:**
+    * `Periode` (Contoh: September 2025, Oktober 2025, dll)
+    * `Nama Dokter`
+    * `Hari`
+    * `Faskes`
+    * `Jam Masuk` (09:00)
+    * `Jam Pulang` (12:00)
+    """)
     uploaded_file = st.sidebar.file_uploader("Pilih file Excel (.xlsx) atau CSV", type=["xlsx", "csv"])
     
     if uploaded_file is not None:
@@ -54,8 +87,7 @@ if metode_input == "Upload File Excel/CSV":
                     nama = str(row.get("Nama Dokter", row.get("Nama", ""))).strip()
                     hari = str(row.get("Hari", "Senin")).strip()
                     faskes = str(row.get("Faskes", row.get("Klinik", ""))).strip()
-                    bulan = str(row.get("Bulan", "Januari")).strip()
-                    tahun = str(row.get("Tahun", str(tahun_ini))).strip()
+                    periode = str(row.get("Periode", row.get("Bulan", "September 2025"))).strip()
                     
                     if not nama or nama == "nan" or not faskes or faskes == "nan":
                         continue
@@ -89,8 +121,7 @@ if metode_input == "Upload File Excel/CSV":
                     status_beban = "Padat 🔴" if durasi_jam > 8 else "Normal 🟢"
                     
                     st.session_state.database_kehadiran.append({
-                        "Bulan": bulan,
-                        "Tahun": str(tahun),
+                        "Periode": periode,
                         "Hari": hari,
                         "Nama Dokter": nama,
                         "Faskes": faskes,
@@ -112,8 +143,7 @@ else:
     # --- INPUT MANUAL ---
     st.sidebar.markdown("---")
     st.sidebar.header("➕ Form Input Satuan")
-    input_bulan = st.sidebar.selectbox("Pilih Bulan:", pilihan_bulan)
-    input_tahun = st.sidebar.selectbox("Pilih Tahun:", pilihan_tahun, index=2)
+    input_periode = st.sidebar.selectbox("Pilih Periode Bulan:", list_periode_tersedia)
     input_nama = st.sidebar.text_input("Nama Lengkap Dokter:")
     input_hari = st.sidebar.selectbox("Pilih Hari:", pilihan_hari)
     input_faskes = st.sidebar.text_input("Nama Faskes / Klinik:")
@@ -137,8 +167,7 @@ else:
             status_beban = "Padat 🔴" if durasi_jam > 8 else "Normal 🟢"
 
             st.session_state.database_kehadiran.append({
-                "Bulan": input_bulan,
-                "Tahun": str(input_tahun),
+                "Periode": input_periode,
                 "Hari": input_hari,
                 "Nama Dokter": input_nama,
                 "Faskes": input_faskes,
@@ -162,7 +191,7 @@ if len(st.session_state.database_kehadiran) > 0:
         st.rerun()
 
     list_pilihan_hapus = [
-        f"ID {idx}: {item['Nama Dokter']} ({item['Bulan']} {item['Tahun']} - {item['Faskes']})"
+        f"ID {idx}: {item['Nama Dokter']} ({item['Periode']} - {item['Faskes']})"
         for idx, item in enumerate(st.session_state.database_kehadiran)
     ]
     data_terpilih_hapus = st.sidebar.selectbox("Pilih Data untuk Dihapus:", list_pilihan_hapus)
@@ -184,8 +213,8 @@ if len(st.session_state.database_kehadiran) > 0:
     
     f_col1, f_col2, f_col3, f_col4 = st.columns(4)
     with f_col1:
-        list_bulan_unik = ["Semua Bulan"] + sorted(df_master["Bulan"].unique().tolist())
-        filter_bulan = st.selectbox("Filter Bulan:", list_bulan_unik)
+        list_periode_unik = ["Semua Periode"] + [p for p in list_periode_tersedia if p in df_master["Periode"].unique().tolist()]
+        filter_periode = st.selectbox("Filter Periode (Bulan):", list_periode_unik)
     with f_col2:
         list_faskes_unik = ["Semua Faskes"] + sorted(df_master["Faskes"].unique().tolist())
         filter_faskes = st.selectbox("Filter Faskes:", list_faskes_unik)
@@ -197,8 +226,8 @@ if len(st.session_state.database_kehadiran) > 0:
 
     # --- PROSES FILTER DATA ---
     df_tampil = df_master.copy()
-    if filter_bulan != "Semua Bulan":
-        df_tampil = df_tampil[df_tampil["Bulan"] == filter_bulan]
+    if filter_periode != "Semua Periode":
+        df_tampil = df_tampil[df_tampil["Periode"] == filter_periode]
     if filter_faskes != "Semua Faskes":
         df_tampil = df_tampil[df_tampil["Faskes"] == filter_faskes]
     if filter_dokter != "Semua Dokter":
@@ -211,14 +240,14 @@ if len(st.session_state.database_kehadiran) > 0:
     headcount_filter = df_tampil["Nama Dokter"].nunique()
     fte_filter = round(total_jam_filter / standar_jam_fulltime_mingguan, 2)
     
-    # Kebutuhan ideal berdasarkan peserta JKN
     dokter_ideal_jkn = round(jumlah_peserta_faskes / standar_rasio, 2)
     
-    # Hitung Gap (Kekurangan) FTE dan Jam
     gap_fte = round(max(0.0, dokter_ideal_jkn - fte_filter), 2)
     gap_jam_mingguan = round(gap_fte * standar_jam_fulltime_mingguan, 1)
+    
+    # Pembulatan ke atas untuk tambahan dokter
+    tambahan_dokter_bulat = math.ceil(gap_fte)
 
-    # Kapasitas maksimal fisik poli dalam seminggu
     maks_kapasitas_jam_poli = jumlah_poli_tersedia * jam_operasional_poli_per_hari * hari_operasional_per_minggu
 
     st.markdown("---")
@@ -235,25 +264,24 @@ if len(st.session_state.database_kehadiran) > 0:
         status_fte = "Kapasitas Memadai ✅" if fte_filter >= dokter_ideal_jkn else "Defisit Tenaga (Kurang) ⚠️"
         st.metric(label="Evaluasi Rasio JKN", value=status_fte)
 
-    # --- KOTAK REKOMENDASI PENAMBAHAN (GAP ANALYSIS & INFRASTRUKTUR POLI) ---
+    # --- KOTAK REKOMENDASI PENAMBAHAN ---
     st.markdown("---")
     st.subheader("💡 Rekomendasi Solusi & Analisis Keterbatasan Poli")
     
     if gap_fte > 0:
         st.warning(f"""
         ⚠️ **Faskes Anda mengalami kekurangan tenaga (Defisit FTE sebesar {gap_fte} FTE):**
-        * **Kekurangan Jumlah Dokter:** Anda membutuhkan tambahan **~{math_ceil_custom(gap_fte)} orang dokter** dengan beban kerja penuh, atau penambahan akumulasi jam praktek sebanyak **{gap_jam_mingguan} jam per minggu** secara keseluruhan.
+        * **Kekurangan Jumlah Dokter:** Anda membutuhkan tambahan **~{tambahan_dokter_bulat} orang dokter** penuh, atau penambahan akumulasi jam praktek sebanyak **{gap_jam_mingguan} jam per minggu** secara keseluruhan.
         """)
     else:
         st.success("✅ **Kapasitas tenaga riil (FTE) faskes Anda sudah mencukupi atau melebihi standar rasio JKN!**")
 
-    # Analisis Keterbatasan Poli (Headcount vs Poli)
     st.info(f"""
     🏥 **Analisis Kapasitas Fisik (Keterbatasan Poli):**
-    * **Jumlah Unit Poli Tersedia:** {jumlah_poli_tersedia} Poli (dengan jam operasional {jam_operasional_poli_per_hari} jam/hari, {hari_operasional_per_minggu} hari/minggu).
+    * **Jumlah Unit Poli Tersedia:** {jumlah_poli_tersedia} Poli (operasional {jam_operasional_poli_per_hari} jam/hari, {hari_operasional_per_minggu} hari/minggu).
     * **Batas Maksimal Jam Operasional Poli:** Total kapasitas fisik poli adalah **{maks_kapasitas_jam_poli} jam/minggu**.
     * **Total Jam Praktek Dokter Saat Ini:** **{total_jam_filter:.1f} jam/minggu**.
-    * *Catatan Operasional:* Meskipun di faskes tercatat ada banyak dokter (*headcount*), **dokter tidak bisa praktek bersamaan melebihi jumlah unit poli ({jumlah_poli_tersedia} poli)**. Jika total jam praktek dokter mendekati atau melebihi kapasitas fisik poli ({maks_kapasitas_jam_poli} jam), maka faskes **wajib menambah jumlah unit poli fisik**, bukan sekadar menambah nama dokter di atas kertas.
+    * *Catatan Operasional:* Dokter tidak bisa praktek bersamaan melebihi jumlah unit poli ({jumlah_poli_tersedia} poli). Jika total jam praktek mendekati atau melebihi kapasitas fisik poli ({maks_kapasitas_jam_poli} jam), faskes **wajib menambah jumlah unit poli fisik**, bukan sekadar menambah nama dokter.
     """)
 
     st.markdown("---")
@@ -268,7 +296,7 @@ if len(st.session_state.database_kehadiran) > 0:
         st.metric(label="Rata-rata Jam per Dokter", value=f"{(total_jam_filter / headcount_filter if headcount_filter > 0 else 0):.1f} Jam")
 
     # --- TABEL UTAMA ---
-    df_tampil_clean = df_tampil[["Bulan", "Tahun", "Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Total Jam Praktek", "Status"]].copy()
+    df_tampil_clean = df_tampil[["Periode", "Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Total Jam Praktek", "Status"]].copy()
     df_tampil_clean.insert(0, "ID", df_tampil.index)
 
     st.markdown(f"### 📋 Rincian Jadwal ({len(df_tampil_clean)} Data Ditemukan)")
