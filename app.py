@@ -3,17 +3,23 @@ import pandas as pd
 import datetime
 
 # Konfigurasi Halaman Web
-st.set_page_config(page_title="Dashboard Master Kehadiran Dokter", page_icon="🏥", layout="wide")
+st.set_page_config(page_title="Dashboard Master Kehadiran Dokter & Rasio JKN", page_icon="🏥", layout="wide")
 
 # Inisialisasi Database Sementara di Sesi Web
 if 'database_kehadiran' not in st.session_state:
     st.session_state.database_kehadiran = []
 
 # Judul Aplikasi
-st.title("🏥 Dashboard Master & Monitoring Kehadiran Seluruh Dokter")
-st.markdown("Pusat data terintegrasi untuk mencatat, merekam, dan memantau jam praktek seluruh tenaga medis.")
+st.title("🏥 Dashboard Master Kehadiran Dokter & Analisis Rasio JKN")
+st.markdown("Pusat data terintegrasi untuk memantau jam praktek tenaga medis sekaligus evaluasi rasio ketersediaan dokter terhadap kepesertaan JKN.")
 
-# --- SIDEBAR: METODE INPUT (UPLOAD EXCEL ATAU MANUAL) ---
+# --- SIDEBAR: PENGATURAN & INPUT ---
+st.sidebar.header("⚙️ Pengaturan & Target JKN")
+# Pengaturan standar rasio peserta (default 1 : 5000)
+standar_peserta_per_dokter = st.sidebar.number_input("Standar Rasio JKN (Peserta per Dokter):", min_value=500, max_value=20000, value=5000, step=500)
+jumlah_peserta_faskes = st.sidebar.number_input("Total Peserta JKN di Faskes Ini:", min_value=100, max_value=50000, value=5000, step=500)
+
+st.sidebar.markdown("---")
 st.sidebar.header("📁 Metode Input Data")
 metode_input = st.sidebar.radio("Pilih cara input:", ["Upload File Excel/CSV", "Input Manual (Form)"])
 
@@ -24,7 +30,6 @@ if metode_input == "Upload File Excel/CSV":
     st.sidebar.subheader("📤 Upload Jadwal Massal")
     st.sidebar.markdown("""
     **Format Kolom File Excel:**
-    Pastikan baris pertama excel Anda berisi kolom:
     * `Nama Dokter`
     * `Hari`
     * `Faskes`
@@ -41,13 +46,11 @@ if metode_input == "Upload File Excel/CSV":
             else:
                 df_upload = pd.read_excel(uploaded_file)
                 
-            # Bersihkan nama kolom dari spasi tersembunyi agar tidak error
             df_upload.columns = df_upload.columns.str.strip()
                 
             if st.sidebar.button("📥 Proses & Masukkan ke Database"):
                 count_sukses = 0
                 for _, row in df_upload.iterrows():
-                    # Ambil data dengan pencarian kolom yang fleksibel
                     nama = str(row.get("Nama Dokter", row.get("Nama", ""))).strip()
                     hari = str(row.get("Hari", "Senin")).strip()
                     faskes = str(row.get("Faskes", row.get("Klinik", ""))).strip()
@@ -58,7 +61,6 @@ if metode_input == "Upload File Excel/CSV":
                     j_masuk_raw = row.get("Jam Masuk", row.get("Mulai", "08:00"))
                     j_pulang_raw = row.get("Jam Pulang", row.get("Selesai", "16:00"))
                     
-                    # Tangani jika format waktu terbaca sebagai jam/waktu oleh pandas
                     if isinstance(j_masuk_raw, datetime.time):
                         m_jam, m_menit = j_masuk_raw.hour, j_masuk_raw.minute
                     else:
@@ -146,10 +148,9 @@ if len(st.session_state.database_kehadiran) > 0:
     st.sidebar.markdown("---")
     st.sidebar.header("🗑️ Kelola Database")
     
-    # Tombol hapus seluruh database dulu agar bisa re-upload file bersih
     if st.sidebar.button("⚠️ Hapus Seluruh Database (Reset)"):
         st.session_state.database_kehadiran = []
-        st.sidebar.warning("Database dibersihkan. Silakan upload ulang file Excel Anda.")
+        st.sidebar.warning("Database dibersihkan.")
         st.rerun()
 
     list_pilihan_hapus = [
@@ -174,13 +175,34 @@ if len(st.session_state.database_kehadiran) > 0:
     total_dokter_unik = df_master["Nama Dokter"].nunique()
     total_akumulasi_jam = df_master["Total Jam Praktek"].sum()
     
+    # --- PERHITUNGAN ANALISIS RASIO JKN ---
+    # Kebutuhan dokter ideal berdasarkan jumlah peserta dan standar (misal 5000)
+    dokter_ideal_dibutuhkan = max(1, round(jumlah_peserta_faskes / standar_peserta_per_dokter, 1))
+    rasio_aktual = round(jumlah_peserta_faskes / total_dokter_unik, 0) if total_dokter_unik > 0 else 0
+    
+    st.markdown("### 📊 Analisis Rasio Ketersediaan Dokter vs Kepesertaan JKN")
+    
+    col_j1, col_j2, col_j3, col_j4 = st.columns(4)
+    with col_j1:
+        st.metric(label="Total Peserta JKN", value=f"{jumlah_peserta_faskes:,} Jiwa")
+    with col_j2:
+        st.metric(label="Dokter Terdaftar", value=f"{total_dokter_unik} Dokter")
+    with col_j3:
+        st.metric(label="Standar Rasio Ideal", value=f"1 : {standar_peserta_per_dokter:,}")
+    with col_j4:
+        eval_rasio = "Ideal / Memenuhi ✅" if total_dokter_unik >= (jumlah_peserta_faskes / standar_peserta_per_dokter) else "Kurang (Defisit) ⚠️"
+        st.metric(label="Evaluasi Kapasitas", value=eval_rasio)
+
+    st.markdown("---")
+
+    # Metrik Ringkasan Utama Biasa
     col_c1, col_c2, col_c3 = st.columns(3)
     with col_c1:
         st.metric(label="Total Sesi Jadwal", value=f"{total_catatan} Sesi")
     with col_c2:
-        st.metric(label="Dokter Terdaftar", value=f"{total_dokter_unik} Dokter")
-    with col_c3:
         st.metric(label="Akumulasi Jam Praktek", value=f"{total_akumulasi_jam:.1f} Jam")
+    with col_c3:
+        st.metric(label="Rasio Peserta per Dokter Aktif", value=f"1 : {int(rasio_aktual):,}")
         
     st.markdown("### 🔍 Panel Filter & Pencarian Lanjutan")
     
@@ -228,8 +250,8 @@ if len(st.session_state.database_kehadiran) > 0:
     st.download_button(
         label="Download Data ke CSV (Excel)",
         data=csv_master,
-        file_name='Laporan_Kehadiran_Dokter.csv',
+        file_name='Laporan_Kehadiran_Dokter_JKN.csv',
         mime='text/csv',
     )
 else:
-    st.info("ℹ️ Belum ada data. Silakan klik **Hapus Seluruh Database (Reset)** di sidebar kiri, lalu upload ulang file Excel Anda.")
+    st.info("ℹ️ Belum ada data. Silakan upload file Excel atau gunakan form manual di sebelah kiri.")
