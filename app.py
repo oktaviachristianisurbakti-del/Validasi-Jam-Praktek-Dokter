@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import math
+import io
 
 # Konfigurasi Halaman Web
 st.set_page_config(page_title="Dashboard Analisis FTE, JKN & Kebutuhan Poli", page_icon="🏥", layout="wide")
@@ -37,7 +38,7 @@ list_periode_tersedia = generate_periode_list()
 
 # --- SIDEBAR: PENGATURAN PARAMETER ---
 st.sidebar.header("⚙️ Pengaturan Standar & Kapasitas")
-jumlah_peserta_faskes = st.sidebar.number_input("Total Peserta JKN (Default/Global):", min_value=500, max_value=500000, value=42086, step=500)
+jumlah_peserta_faskes = st.sidebar.number_input("Total Peserta JKN (Default/Global):", min_value=500, max_value=500000, value=7873, step=500)
 standar_rasio = st.sidebar.number_input("Standar Rasio Peserta per Dokter:", min_value=1000, max_value=10000, value=5000, step=500)
 standar_jam_fulltime_mingguan = st.sidebar.number_input("Standar Jam Full-Time / Minggu:", min_value=20, max_value=50, value=40)
 
@@ -98,7 +99,7 @@ if metode_input == "Upload File Excel/CSV":
                         
                     durasi_menit = max(0, t_selesai_menit - t_mulai_menit)
                     durasi_jam = round(durasi_menit / 60, 2)
-                    status_beban = "Padat 🔴" if durasi_jam > 8 else "Normal 🟢"
+                    status_beban = "Normal 🟢" if durasi_jam <= 8 else "Lebih Batas Harian ⚠️"
                     
                     st.session_state.database_kehadiran.append({
                         "Periode": periode,
@@ -108,7 +109,7 @@ if metode_input == "Upload File Excel/CSV":
                         "Jam Masuk": f"{m_jam:02d}:{m_menit:02d}",
                         "Jam Pulang": f"{p_jam:02d}:{p_menit:02d}",
                         "Total Jam Praktek": durasi_jam,
-                        "Status": status_beban,
+                        "Status Sesi": status_beban,
                         "Obj_Mulai": t_mulai_menit,
                         "Obj_Selesai": t_selesai_menit
                     })
@@ -144,7 +145,7 @@ else:
                 t_selesai_menit += 24 * 60
             durasi_menit = max(0, t_selesai_menit - t_mulai_menit)
             durasi_jam = round(durasi_menit / 60, 2)
-            status_beban = "Padat 🔴" if durasi_jam > 8 else "Normal 🟢"
+            status_beban = "Normal 🟢" if durasi_jam <= 8 else "Lebih Batas Harian ⚠️"
 
             st.session_state.database_kehadiran.append({
                 "Periode": input_periode,
@@ -154,7 +155,7 @@ else:
                 "Jam Masuk": input_mulai.strftime("%H:%M"),
                 "Jam Pulang": input_selesai.strftime("%H:%M"),
                 "Total Jam Praktek": durasi_jam,
-                "Status": status_beban,
+                "Status Sesi": status_beban,
                 "Obj_Mulai": t_mulai_menit,
                 "Obj_Selesai": t_selesai_menit
             })
@@ -216,7 +217,6 @@ if len(st.session_state.database_kehadiran) > 0:
         df_tampil = df_tampil[df_tampil["Hari"] == filter_hari]
 
     # --- DINAMIS JUMLAH PESERTA BERDASARKAN FILTER FASKES ---
-    # Jika user ingin menyesuaikan jumlah peserta spesifik per faskes, bisa di-input di bawah filter jika faskes dipilih khusus
     peserta_aktif = jumlah_peserta_faskes
     if filter_faskes != "Semua Faskes":
         st.markdown(f"**Pengaturan Khusus untuk Faskes: `{filter_faskes}`**")
@@ -227,26 +227,23 @@ if len(st.session_state.database_kehadiran) > 0:
     headcount_filter = df_tampil["Nama Dokter"].nunique()
     fte_filter = round(total_jam_filter / standar_jam_fulltime_mingguan, 2)
     
-    # Kebutuhan ideal JKN langsung mengikuti peserta_aktif yang sedang difilter
     dokter_ideal_jkn = round(peserta_aktif / standar_rasio, 2)
-    
     gap_fte = round(max(0.0, dokter_ideal_jkn - fte_filter), 2)
     gap_jam_mingguan = round(gap_fte * standar_jam_fulltime_mingguan, 1)
     tambahan_dokter_bulat = math.ceil(gap_fte)
 
-    # --- DETEKSI IRISAN JAM (SIMULTAN) UNTUK MENCARI KEBUTUHAN POLI SEHARUSNYA ---
-    # Kita cek setiap hari, pada jam yang sama, ada berapa dokter yang praktek bersamaan
+    # Status Evaluasi Keseluruhan Faskes
+    status_evaluasi_keseluruhan = "Memadai ✅" if fte_filter >= dokter_ideal_jkn else "Defisit Tenaga (Kurang) ⚠️"
+
+    # Deteksi Kebutuhan Poli Simultan
     max_poli_simultan = 1
     if not df_tampil.empty:
-        # Cek per hari
         for h in df_tampil["Hari"].unique():
             df_hari = df_tampil[df_tampil["Hari"] == h]
-            # Buat timeline per menit dalam sehari (0 sampai 1440 menit)
             menit_timeline = [0] * 1440
             for _, row in df_hari.iterrows():
                 m_start = row["Obj_Mulai"]
                 m_end = row["Obj_Selesai"]
-                # Tandai menit-menit yang terisi oleh dokter ini
                 for m in range(int(m_start), int(m_end)):
                     if m < 1440:
                         menit_timeline[m] += 1
@@ -264,12 +261,11 @@ if len(st.session_state.database_kehadiran) > 0:
     with col_f2:
         st.metric(label="Tenaga Riil (FTE)", value=f"{fte_filter} FTE")
     with col_f3:
-        st.metric(label="Kebutuhan Ideal JKN", value=f"{dokter_ideal_jkn} FTE ( dr)")
+        st.metric(label="Kebutuhan Ideal JKN", value=f"{dokter_ideal_jkn} FTE")
     with col_f4:
-        status_fte = "Kapasitas Memadai ✅" if fte_filter >= dokter_ideal_jkn else "Defisit Tenaga (Kurang) ⚠️"
-        st.metric(label="Evaluasi Rasio JKN", value=status_fte)
+        st.metric(label="Evaluasi Rasio JKN", value=status_evaluasi_keseluruhan)
 
-    # --- KOTAK REKOMENDASI PENAMBAHAN & KEBUTUHAN POLI SIMULTAN ---
+    # --- KOTAK REKOMENDASI PENAMBAHAN ---
     st.markdown("---")
     st.subheader("💡 Rekomendasi Solusi & Kebutuhan Poli Ideal")
     
@@ -284,8 +280,7 @@ if len(st.session_state.database_kehadiran) > 0:
     st.info(f"""
     🏥 **Analisis Kebutuhan Poli Berdasarkan Jam Beririsan (Simultan):**
     * **Jumlah Unit Poli Minimal yang Seharusnya Tersedia:** **{max_poli_simultan} Poli**
-    * *Penjelasan:* Berdasarkan jadwal yang ada, pada jam-jam sibuk terdapat **{max_poli_simultan} dokter** yang tercatat praktek pada waktu/jam yang sama secara bersamaan (beririsan). 
-    * Oleh karena itu, faskes ini **wajib menyediakan minimal {max_poli_simultan} unit ruang poli aktif** agar seluruh dokter dapat melayani pasien sesuai jadwal tanpa harus saling menunggu ruangan.
+    * *Penjelasan:* Berdasarkan jadwal yang ada, pada jam-jam sibuk terdapat **{max_poli_simultan} dokter** yang tercatat praktek pada waktu yang sama secara bersamaan (beririsan). Faskes wajib menyediakan minimal {max_poli_simultan} unit ruang poli aktif.
     """)
 
     st.markdown("---")
@@ -300,7 +295,7 @@ if len(st.session_state.database_kehadiran) > 0:
         st.metric(label="Rata-rata Jam per Dokter", value=f"{(total_jam_filter / headcount_filter if headcount_filter > 0 else 0):.1f} Jam")
 
     # --- TABEL UTAMA ---
-    df_tampil_clean = df_tampil[["Periode", "Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Total Jam Praktek", "Status"]].copy()
+    df_tampil_clean = df_tampil[["Periode", "Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Total Jam Praktek", "Status Sesi"]].copy()
     df_tampil_clean.insert(0, "ID", df_tampil.index)
 
     st.markdown(f"### 📋 Rincian Jadwal ({len(df_tampil_clean)} Data Ditemukan)")
@@ -313,14 +308,38 @@ if len(st.session_state.database_kehadiran) > 0:
     else:
         st.info("Tidak ada data yang cocok dengan filter tersebut.")
     
+    # --- FITUR DOWNLOAD LAPORAN EKSEKUTIF (RINGKASAN + KESIMPULAN) ---
     st.markdown("---")
-    st.subheader("📥 Export Laporan")
-    csv_master = df_tampil_clean.to_csv(index=False).encode('utf-8')
+    st.subheader("📥 Export Laporan Analisis Lengkap")
+    st.markdown("Tombol di bawah ini akan mendownload laporan ringkasan eksekutif beserta kesimpulan status rasio JKN dan kebutuhan poli faskes.")
+
+    # Membuat format ringkasan teks untuk didownload
+    ringkasan_laporan = f"""LAPORAN ANALISIS BEBAN KERJA, RASIO JKN & KEBUTUHAN POLI
+==================================================
+Filter Periode : {filter_periode}
+Filter Faskes  : {filter_faskes}
+Total Peserta JKN : {peserta_aktif:,} Jiwa
+
+RINGKASAN KAPASITAS KESELURUHAN:
+- Jumlah Orang (Headcount) Dokter : {headcount_filter} Orang
+- Kekuatan Tenaga Riil (FTE)      : {fte_filter} FTE
+- Kebutuhan Ideal JKN (Rasio 1:{standar_rasio}) : {dokter_ideal_jkn} FTE
+- Status Evaluasi Keseluruhan     : {status_evaluasi_keseluruhan}
+- Kekurangan (Defisit) FTE        : {gap_fte} FTE (Butuh tambahan ~{tambahan_dokter_bulat} dokter / {gap_jam_mingguan} jam/minggu)
+- Kebutuhan Unit Poli Simultan    : Minimal {max_poli_simultan} Unit Poli Aktif
+
+==================================================
+RINCIAN JADWAL PRAKTEK:
+"""
+    # Ubah tabel rincian menjadi teks CSV juga untuk digabung dalam laporan
+    csv_tabel = df_tampil_clean.to_csv(index=False)
+    laporan_final = ringkasan_laporan + "\n" + csv_tabel
+
     st.download_button(
-        label="Download Data ke CSV (Excel)",
-        data=csv_master,
-        file_name='Laporan_Analisis_Gap_JKN.csv',
-        mime='text/css',
+        label="📥 Download Laporan Ringkasan & Rincian (TXT/CSV)",
+        data=laporan_final.encode('utf-8'),
+        file_name=f'Laporan_Analisis_JKN_{filter_faskes.replace(" ", "_")}.txt',
+        mime='text/plain',
     )
 else:
     st.info("ℹ️ Belum ada data. Silakan upload file Excel atau gunakan form manual di sebelah kiri.")
