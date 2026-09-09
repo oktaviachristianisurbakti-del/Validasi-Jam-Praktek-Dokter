@@ -5,7 +5,7 @@ import datetime
 # Konfigurasi Halaman Web
 st.set_page_config(page_title="Dashboard Master Kehadiran Dokter", page_icon="🏥", layout="wide")
 
-# Inisialisasi Database Sementara di Sesi Web (agar data tidak hilang saat input baru)
+# Inisialisasi Database Sementara di Sesi Web
 if 'database_kehadiran' not in st.session_state:
     st.session_state.database_kehadiran = []
 
@@ -34,7 +34,6 @@ if st.sidebar.button("💾 Simpan ke Database"):
     if input_nama.strip() == "" or input_faskes.strip() == "":
         st.sidebar.error("Nama Dokter dan Faskes tidak boleh kosong!")
     else:
-        # Hitung durasi
         t_mulai = input_mulai.hour + input_mulai.minute / 60
         t_selesai = input_selesai.hour + input_selesai.minute / 60
         durasi_kotor = t_selesai - t_mulai
@@ -44,20 +43,20 @@ if st.sidebar.button("💾 Simpan ke Database"):
         
         status_beban = "Padat 🔴" if durasi_bersih > 5 else "Normal 🟢"
 
-        # Simpan ke session state
         st.session_state.database_kehadiran.append({
             "Hari": input_hari,
             "Nama Dokter": input_nama,
             "Faskes": input_faskes,
             "Jam Mulai": input_mulai.strftime("%H:%M"),
             "Jam Selesai": input_selesai.strftime("%H:%M"),
+            "Jam Mulai (Obj)": input_mulai,   # Disimpan untuk logika filter jam
+            "Jam Selesai (Obj)": input_selesai, # Disimpan untuk logika filter jam
             "Istirahat (Jam)": input_istirahat,
             "Total Jam": round(durasi_bersih, 2),
             "Status": status_beban
         })
         st.sidebar.success(f"Berhasil merekam jadwal {input_nama}!")
 
-# Tombol untuk Reset/Hapus Database jika diperlukan
 if st.sidebar.button("🗑️ Reset Semua Data"):
     st.session_state.database_kehadiran = []
     st.sidebar.warning("Database telah dibersihkan.")
@@ -81,30 +80,74 @@ if len(st.session_state.database_kehadiran) > 0:
     with col_c3:
         st.metric(label="Akumulasi Seluruh Jam Praktek", value=f"{total_akumulasi_jam:.1f} Jam")
         
-    st.markdown("### 📋 Tabel Master Seluruh Kehadiran Dokter")
+    st.markdown("### 🔍 Panel Filter & Pencarian Lanjutan")
     
-    # Fitur Filter opsional di atas tabel
-    filter_hari = st.selectbox("Filter berdasarkan Hari:", ["Semua Hari"] + pilihan_hari)
-    if filter_hari != "Semua Hari":
-        df_tampil = df_master[df_master["Hari"] == filter_hari]
-    else:
-        df_tampil = df_master
+    # Membuat baris filter interaktif
+    f_col1, f_col2, f_col3 = st.columns(3)
+    
+    with f_col1:
+        filter_hari = st.selectbox("Filter Hari:", ["Semua Hari"] + pilihan_hari)
         
-    st.dataframe(df_tampil, use_container_width=True)
+    with f_col2:
+        list_dokter_unik = ["Semua Dokter"] + sorted(df_master["Nama Dokter"].unique().tolist())
+        filter_dokter = st.selectbox("Filter Nama Dokter:", list_dokter_unik)
+        
+    with f_col3:
+        filter_jam_aktif = st.checkbox("Cek Dokter yang Praktek pada Jam Tertentu?")
+        
+    # Filter Jam Spesifik (jika checkbox dicentang)
+    target_jam = None
+    if filter_jam_aktif:
+        target_jam = st.time_input("Pilih Target Jam (Cek siapa yang bertugas):", value=datetime.time(19, 0))
+
+    # --- PROSES FILTER DATA ---
+    df_tampil = df_master.copy()
+    
+    if filter_hari != "Semua Hari":
+        df_tampil = df_tampil[df_tampil["Hari"] == filter_hari]
+        
+    if filter_dokter != "Semua Dokter":
+        df_tampil = df_tampil[df_tampil["Nama Dokter"] == filter_dokter]
+        
+    if filter_jam_aktif and target_jam is not None:
+        target_menit = target_jam.hour * 60 + target_jam.minute
+        
+        def cek_jam_masuk(row):
+            m_obj = row["Jam Mulai (Obj)"]
+            s_obj = row["Jam Selesai (Obj)"]
+            m_menit = m_obj.hour * 60 + m_obj.minute
+            s_menit = s_obj.hour * 60 + s_obj.minute
+            
+            # Antisipasi jadwal lintas hari (misal 21:00 - 02:00)
+            if s_menit < m_menit:
+                return target_menit >= m_menit or target_menit <= s_menit
+            else:
+                return m_menit <= target_menit <= s_menit
+                
+        df_tampil = df_tampil[df_tampil.apply(cek_jam_masuk, axis=1)]
+
+    # Hapus kolom objek helper sebelum ditampilkan ke tabel
+    df_tampil_clean = df_tampil.drop(columns=["Jam Mulai (Obj)", "Jam Selesai (Obj)"])
+
+    st.markdown(f"### 📋 Hasil Data Kehadiran ({len(df_tampil_clean)} Data Ditemukan)")
+    st.dataframe(df_tampil_clean, use_container_width=True)
     
     # Grafik Akumulasi Jam per Dokter
     st.markdown("### 📊 Grafik Akumulasi Beban Jam Praktek per Dokter")
-    df_grafik = df_master.groupby("Nama Dokter")["Total Jam"].sum()
-    st.bar_chart(df_grafik)
+    if not df_tampil_clean.empty:
+        df_grafik = df_tampil_clean.groupby("Nama Dokter")["Total Jam"].sum()
+        st.bar_chart(df_grafik)
+    else:
+        st.info("Tidak ada data yang cocok dengan kriteria filter.")
     
-    # Export Master Data ke CSV
+    # Export Data
     st.markdown("---")
-    st.subheader("📥 Export Seluruh Database Laporan")
-    csv_master = df_master.to_csv(index=False).encode('utf-8')
+    st.subheader("📥 Export Laporan Sesuai Filter")
+    csv_master = df_tampil_clean.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="Download Seluruh Database ke CSV (Excel)",
+        label="Download Data ke CSV (Excel)",
         data=csv_master,
-        file_name='Master_Database_Kehadiran_Dokter.csv',
+        file_name='Laporan_Filtered_Kehadiran_Dokter.csv',
         mime='text/csv',
     )
 else:
