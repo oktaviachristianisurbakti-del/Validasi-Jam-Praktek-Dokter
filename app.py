@@ -12,7 +12,8 @@ st.markdown("Aplikasi otomatis untuk menghitung durasi, akumulasi beban kerja, d
 # --- SIDEBAR: INPUT DATA UTAMA ---
 st.sidebar.header("📝 Input Data Dokter")
 nama_dokter = st.sidebar.text_input("Nama Lengkap Dokter:", "dr. Andi Wijaya, Sp.PD")
-tanggal_praktek = st.sidebar.date_input("Tanggal Jadwal:", datetime.date.today())
+pilihan_hari = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+hari_praktek = st.sidebar.selectbox("Pilih Hari:", pilihan_hari)
 
 st.sidebar.markdown("---")
 st.sidebar.header("🏥 Tambah Jadwal Faskes")
@@ -74,7 +75,7 @@ total_jam_hari_ini = df_hasil["Total Jam"].sum()
 
 # --- TAMPILAN UTAMA DASHBOARD ---
 st.markdown(f"### 📋 Ringkasan Jadwal untuk: **{nama_dokter}**")
-st.markdown(f"📅 **Tanggal:** {tanggal_praktek.strftime('%A, %d %B %Y')}")
+st.markdown(f"📅 **Jadwal Hari:** {hari_praktek}")
 
 col1, col2, col3 = st.columns(3)
 with col1:
