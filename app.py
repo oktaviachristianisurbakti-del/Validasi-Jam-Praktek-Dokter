@@ -11,9 +11,9 @@ if 'database_kehadiran' not in st.session_state:
 
 # Judul Aplikasi
 st.title("🏥 Dashboard Master & Monitoring Kehadiran Seluruh Dokter")
-st.markdown("Pusat data terintegrasi untuk mencatat, merekam, dan memantau jam praktek seluruh tenaga medis melalui Form Manual maupun Upload File Excel.")
+st.markdown("Pusat data terintegrasi untuk mencatat, merekam, dan memantau jam praktek seluruh tenaga medis.")
 
-# --- SIDEBAR: METODE INPUT (MANUAL ATAU UPLOAD FILE) ---
+# --- SIDEBAR: METODE INPUT (UPLOAD EXCEL ATAU MANUAL) ---
 st.sidebar.header("📁 Metode Input Data")
 metode_input = st.sidebar.radio("Pilih cara input:", ["Upload File Excel/CSV", "Input Manual (Form)"])
 
@@ -23,14 +23,12 @@ if metode_input == "Upload File Excel/CSV":
     st.sidebar.markdown("---")
     st.sidebar.subheader("📤 Upload Jadwal Massal")
     st.sidebar.markdown("""
-    **Format Kolom File Excel/CSV yang Diperlukan:**
+    **Format Kolom File Excel:**
     * `Nama Dokter`
-    * `Hari` (Contoh: Senin, Selasa, dll)
+    * `Hari`
     * `Faskes`
-    * `Jam Masuk` (Format: 09:00)
-    * `Jam Pulang` (Format: 19:00)
-    * `Istirahat Mulai` (Format: 12:00, kosongkan jika tidak ada)
-    * `Istirahat Selesai` (Format: 15:00, kosongkan jika tidak ada)
+    * `Jam Masuk` (Contoh: 09:00)
+    * `Jam Pulang` (Contoh: 12:00)
     """)
     
     uploaded_file = st.sidebar.file_uploader("Pilih file Excel (.xlsx) atau CSV", type=["xlsx", "csv"])
@@ -52,7 +50,6 @@ if metode_input == "Upload File Excel/CSV":
                     if not nama or nama == "nan" or not faskes or faskes == "nan":
                         continue
                         
-                    # Parsing Jam Masuk & Pulang
                     j_masuk_str = str(row.get("Jam Masuk", "08:00")).strip()
                     j_pulang_str = str(row.get("Jam Pulang", "16:00")).strip()
                     
@@ -68,33 +65,9 @@ if metode_input == "Upload File Excel/CSV":
                     if t_selesai_menit < t_mulai_menit:
                         t_selesai_menit += 24 * 60
                         
-                    total_kotor_menit = t_selesai_menit - t_mulai_menit
-                    
-                    # Parsing Istirahat
-                    i_mulai_str = str(row.get("Istirahat Mulai", "")).strip()
-                    i_selesai_str = str(row.get("Istirahat Selesai", "")).strip()
-                    
-                    durasi_istirahat_menit = 0
-                    i_m_menit, i_s_menit = None, None
-                    info_istirahat_str = "Tidak ada"
-                    
-                    if i_mulai_str and i_selesai_str and i_mulai_str != "nan" and i_selesai_str != "nan":
-                        try:
-                            im_jam, im_menit = map(int, i_mulai_str.split(':'))
-                            is_jam, is_menit = map(int, i_selesai_str.split(':'))
-                            i_m_menit = im_jam * 60 + im_menit
-                            i_s_menit = is_jam * 60 + is_menit
-                            if i_s_menit < i_m_menit:
-                                i_s_menit += 24 * 60
-                            durasi_istirahat_menit = max(0, i_s_menit - i_m_menit)
-                            d_jam = round(durasi_istirahat_menit / 60, 2)
-                            info_istirahat_str = f"{i_mulai_str} - {i_selesai_str} ({d_jam} Jam)"
-                        except:
-                            pass
-                            
-                    durasi_bersih_menit = max(0, total_kotor_menit - durasi_istirahat_menit)
-                    durasi_bersih_jam = round(durasi_bersih_menit / 60, 2)
-                    status_beban = "Padat 🔴" if durasi_bersih_jam > 5 else "Normal 🟢"
+                    durasi_menit = max(0, t_selesai_menit - t_mulai_menit)
+                    durasi_jam = round(durasi_menit / 60, 2)
+                    status_beban = "Padat 🔴" if durasi_jam > 5 else "Normal 🟢"
                     
                     st.session_state.database_kehadiran.append({
                         "Hari": hari,
@@ -102,72 +75,43 @@ if metode_input == "Upload File Excel/CSV":
                         "Faskes": faskes,
                         "Jam Masuk": f"{m_jam:02d}:{m_menit:02d}",
                         "Jam Pulang": f"{p_jam:02d}:{p_menit:02d}",
-                        "Waktu Istirahat": info_istirahat_str,
-                        "Total Jam Praktek": durasi_bersih_jam,
+                        "Total Jam Praktek": durasi_jam,
                         "Status": status_beban,
                         "Obj_Mulai": t_mulai_menit,
-                        "Obj_Selesai": t_selesai_menit,
-                        "Obj_Istirahat_Mulai": i_m_menit,
-                        "Obj_Istirahat_Selesai": i_s_menit
+                        "Obj_Selesai": t_selesai_menit
                     })
                     count_sukses += 1
                     
-                st.sidebar.success(f"Berhasil mengimpor {count_sukses} data jadwal dokter!")
+                st.sidebar.success(f"Berhasil mengimpor {count_sukses} baris jadwal!")
                 st.rerun()
         except Exception as e:
             st.sidebar.error(f"Gagal membaca file: {e}")
 
 else:
-    # --- INPUT MANUAL (FORM SEBELUMNYA) ---
+    # --- INPUT MANUAL ---
     st.sidebar.markdown("---")
     st.sidebar.header("➕ Form Input Satuan")
-    input_nama = st.sidebar.text_input("Nama Lengkap Dokter:", placeholder="Contoh: dr. Dimas, Sp.A")
+    input_nama = st.sidebar.text_input("Nama Lengkap Dokter:")
     input_hari = st.sidebar.selectbox("Pilih Hari:", pilihan_hari)
-    input_faskes = st.sidebar.text_input("Nama Faskes / Klinik / RS:", placeholder="Contoh: Klinik Bebita")
+    input_faskes = st.sidebar.text_input("Nama Faskes:")
 
-    st.sidebar.subheader("🕒 Jam Operasional & Istirahat")
     col_m1, col_m2 = st.sidebar.columns(2)
     with col_m1:
         input_mulai = st.time_input("Jam Masuk", value=datetime.time(9, 0))
     with col_m2:
-        input_selesai = st.time_input("Jam Pulang", value=datetime.time(19, 0))
-
-    ada_istirahat = st.sidebar.checkbox("Ada Jam Istirahat?", value=True)
-    input_istirahat_mulai, input_istirahat_selesai = None, None
-
-    if ada_istirahat:
-        col_i1, col_i2 = st.sidebar.columns(2)
-        with col_i1:
-            input_istirahat_mulai = st.time_input("Mulai Istirahat", value=datetime.time(12, 0))
-        with col_i2:
-            input_istirahat_selesai = st.time_input("Selesai Istirahat", value=datetime.time(15, 0))
+        input_selesai = st.time_input("Jam Pulang", value=datetime.time(12, 0))
 
     if st.sidebar.button("💾 Simpan ke Database"):
         if input_nama.strip() == "" or input_faskes.strip() == "":
-            st.sidebar.error("Nama Dokter dan Faskes tidak boleh kosong!")
+            st.sidebar.error("Nama dan Faskes wajib diisi!")
         else:
             t_mulai_menit = input_mulai.hour * 60 + input_mulai.minute
             t_selesai_menit = input_selesai.hour * 60 + input_selesai.minute
             if t_selesai_menit < t_mulai_menit:
                 t_selesai_menit += 24 * 60
-            total_kotor_menit = t_selesai_menit - t_mulai_menit
-            
-            durasi_istirahat_menit = 0
-            i_m_menit, i_s_menit = None, None
-            info_istirahat_str = "Tidak ada"
-            
-            if ada_istirahat and input_istirahat_mulai and input_istirahat_selesai:
-                i_m_menit = input_istirahat_mulai.hour * 60 + input_istirahat_mulai.minute
-                i_s_menit = input_istirahat_selesai.hour * 60 + input_istirahat_selesai.minute
-                if i_s_menit < i_m_menit:
-                    i_s_menit += 24 * 60
-                durasi_istirahat_menit = max(0, i_s_menit - i_m_menit)
-                d_jam = round(durasi_istirahat_menit / 60, 2)
-                info_istirahat_str = f"{input_istirahat_mulai.strftime('%H:%M')} - {input_istirahat_selesai.strftime('%H:%M')} ({d_jam} Jam)"
-                
-            durasi_bersih_menit = max(0, total_kotor_menit - durasi_istirahat_menit)
-            durasi_bersih_jam = round(durasi_bersih_menit / 60, 2)
-            status_beban = "Padat 🔴" if durasi_bersih_jam > 5 else "Normal 🟢"
+            durasi_menit = max(0, t_selesai_menit - t_mulai_menit)
+            durasi_jam = round(durasi_menit / 60, 2)
+            status_beban = "Padat 🔴" if durasi_jam > 5 else "Normal 🟢"
 
             st.session_state.database_kehadiran.append({
                 "Hari": input_hari,
@@ -175,22 +119,19 @@ else:
                 "Faskes": input_faskes,
                 "Jam Masuk": input_mulai.strftime("%H:%M"),
                 "Jam Pulang": input_selesai.strftime("%H:%M"),
-                "Waktu Istirahat": info_istirahat_str,
-                "Total Jam Praktek": durasi_bersih_jam,
+                "Total Jam Praktek": durasi_jam,
                 "Status": status_beban,
                 "Obj_Mulai": t_mulai_menit,
-                "Obj_Selesai": t_selesai_menit,
-                "Obj_Istirahat_Mulai": i_m_menit,
-                "Obj_Istirahat_Selesai": i_s_menit
+                "Obj_Selesai": t_selesai_menit
             })
             st.sidebar.success(f"Berhasil merekam jadwal {input_nama}!")
 
-# --- FITUR HAPUS DATA DI SIDEBAR ---
+# --- KELOLA DATABASE / HAPUS ---
 if len(st.session_state.database_kehadiran) > 0:
     st.sidebar.markdown("---")
     st.sidebar.header("🗑️ Kelola Database")
     list_pilihan_hapus = [
-        f"ID {idx}: {item['Nama Dokter']} ({item['Hari']} - {item['Faskes']})"
+        f"ID {idx}: {item['Nama Dokter']} ({item['Hari']} | {item['Jam Masuk']}-{item['Jam Pulang']})"
         for idx, item in enumerate(st.session_state.database_kehadiran)
     ]
     data_terpilih_hapus = st.sidebar.selectbox("Pilih Data untuk Dihapus:", list_pilihan_hapus)
@@ -203,10 +144,10 @@ if len(st.session_state.database_kehadiran) > 0:
 
     if st.sidebar.button("⚠️ Hapus Seluruh Database"):
         st.session_state.database_kehadiran = []
-        st.sidebar.warning("Semua data telah dibersihkan.")
+        st.sidebar.warning("Database dibersihkan.")
         st.rerun()
 
-# --- TAMPILAN UTAMA DASHBOARD MASTER ---
+# --- DASHBOARD UTAMA ---
 st.markdown("---")
 
 if len(st.session_state.database_kehadiran) > 0:
@@ -218,11 +159,11 @@ if len(st.session_state.database_kehadiran) > 0:
     
     col_c1, col_c2, col_c3 = st.columns(3)
     with col_c1:
-        st.metric(label="Total Rekaman Jadwal", value=f"{total_catatan} Entri")
+        st.metric(label="Total Sesi Jadwal", value=f"{total_catatan} Sesi")
     with col_c2:
-        st.metric(label="Jumlah Dokter Terdaftar", value=f"{total_dokter_unik} Dokter")
+        st.metric(label="Dokter Terdaftar", value=f"{total_dokter_unik} Dokter")
     with col_c3:
-        st.metric(label="Akumulasi Seluruh Jam Praktek", value=f"{total_akumulasi_jam:.1f} Jam")
+        st.metric(label="Akumulasi Jam Praktek", value=f"{total_akumulasi_jam:.1f} Jam")
         
     st.markdown("### 🔍 Panel Filter & Pencarian Lanjutan")
     
@@ -237,9 +178,8 @@ if len(st.session_state.database_kehadiran) > 0:
         
     target_jam = None
     if filter_jam_aktif:
-        target_jam = st.time_input("Pilih Target Jam:", value=datetime.time(14, 0))
+        target_jam = st.time_input("Pilih Target Jam:", value=datetime.time(10, 0))
 
-    # --- PROSES FILTER ---
     df_tampil = df_master.copy()
     if filter_hari != "Semua Hari":
         df_tampil = df_tampil[df_tampil["Hari"] == filter_hari]
@@ -249,16 +189,10 @@ if len(st.session_state.database_kehadiran) > 0:
     if filter_jam_aktif and target_jam is not None:
         target_menit = target_jam.hour * 60 + target_jam.minute
         def cek_sedang_praktek(row):
-            m, s = row["Obj_Mulai"], row["Obj_Selesai"]
-            i_m, i_s = row["Obj_Istirahat_Mulai"], row["Obj_Istirahat_Selesai"]
-            dalam_rentang = (m <= target_menit <= s)
-            if dalam_rentang and i_m is not None and i_s is not None:
-                if i_m <= target_menit <= i_s:
-                    return False
-            return dalam_rentang
+            return row["Obj_Mulai"] <= target_menit <= row["Obj_Selesai"]
         df_tampil = df_tampil[df_tampil.apply(cek_sedang_praktek, axis=1)]
 
-    df_tampil_clean = df_tampil[["Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Waktu Istirahat", "Total Jam Praktek", "Status"]].copy()
+    df_tampil_clean = df_tampil[["Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Total Jam Praktek", "Status"]].copy()
     df_tampil_clean.insert(0, "ID", df_tampil.index)
 
     st.markdown(f"### 📋 Hasil Data Kehadiran ({len(df_tampil_clean)} Data Ditemukan)")
@@ -269,15 +203,15 @@ if len(st.session_state.database_kehadiran) > 0:
         df_grafik = df_tampil_clean.groupby("Nama Dokter")["Total Jam Praktek"].sum()
         st.bar_chart(df_grafik)
     else:
-        st.info("Tidak ada dokter yang aktif praktek pada filter jam tersebut.")
+        st.info("Tidak ada dokter yang aktif praktek pada filter tersebut.")
     
     st.markdown("---")
-    st.subheader("📥 Export Laporan Sesuai Filter")
+    st.subheader("📥 Export Laporan")
     csv_master = df_tampil_clean.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="Download Data ke CSV (Excel)",
         data=csv_master,
-        file_name='Laporan_Kehadiran_Dokter_Detail.csv',
+        file_name='Laporan_Kehadiran_Dokter.csv',
         mime='text/csv',
     )
 else:
