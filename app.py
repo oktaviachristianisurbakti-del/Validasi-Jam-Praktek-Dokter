@@ -3,23 +3,24 @@ import pandas as pd
 import datetime
 
 # Konfigurasi Halaman Web
-st.set_page_config(page_title="Dashboard Analisis Rasio JKN & Beban Kerja Dokter", page_icon="🏥", layout="wide")
+st.set_page_config(page_title="Dashboard Analisis Beban Kerja & Rasio JKN", page_icon="🏥", layout="wide")
 
 # Inisialisasi Database Sementara di Sesi Web
 if 'database_kehadiran' not in st.session_state:
     st.session_state.database_kehadiran = []
 
 # Judul Aplikasi
-st.title("🏥 Dashboard Analisis Rasio JKN & Kapasitas Layanan Dokter")
-st.markdown("Pusat monitoring kehadiran tenaga medis berbasis analisis beban kerja (*Workload Analysis*) dengan standar pelayanan 6 menit per pasien.")
+st.title("🏥 Dashboard Analisis Beban Kerja & Kapasitas Layanan Dokter")
+st.markdown("Pusat monitoring kehadiran tenaga medis dengan perhitungan kapasitas pasien riil berdasarkan durasi jam praktek masing-masing dokter.")
 
-# --- SIDEBAR: PENGATURAN & PARAMETER JKN ---
+# --- SIDEBAR: PENGATURAN PARAMETER JKN ---
 st.sidebar.header("⚙️ Parameter Standar JKN")
-jumlah_peserta_faskes = st.sidebar.number_input("Total Peserta JKN di Faskes:", min_value=500, max_value=50000, value=5000, step=500)
+jumlah_peserta_faskes = st.sidebar.number_input("Total Peserta JKN di Faskes:", min_value=500, max_value=100000, value=7873, step=500)
 standar_rasio = st.sidebar.number_input("Standar Rasio Peserta per Dokter:", min_value=1000, max_value=10000, value=5000, step=500)
 menit_per_pasien = st.sidebar.slider("Durasi Pelayanan per Pasien (Menit):", min_value=3, max_value=15, value=6)
-hari_kerja_per_bulan = st.sidebar.number_input("Hari Kerja Efektif per Bulan:", min_value=20, max_value=30, value=25)
-jam_kerja_harian = st.sidebar.number_input("Jam Kerja Efektif Dokter per Hari:", min_value=4, max_value=10, value=7)
+
+# Pengali minggu dalam sebulan untuk proyeksi bulanan (standar 4.3 minggu atau 4 minggu)
+minggu_per_bulan = st.sidebar.number_input("Asumsi Minggu Efektif per Bulan:", min_value=3.0, max_value=5.0, value=4.3, step=0.1)
 
 st.sidebar.markdown("---")
 st.sidebar.header("📁 Metode Input Data")
@@ -77,6 +78,10 @@ if metode_input == "Upload File Excel/CSV":
                         
                     durasi_menit = max(0, t_selesai_menit - t_mulai_menit)
                     durasi_jam = round(durasi_menit / 60, 2)
+                    
+                    # Kapasitas pasien per sesi ini berdasarkan durasi jam praktek & standar menit per pasien
+                    kapasitas_sesi = int((durasi_menit) / menit_per_pasien)
+                    
                     status_beban = "Padat 🔴" if durasi_jam > 5 else "Normal 🟢"
                     
                     st.session_state.database_kehadiran.append({
@@ -86,6 +91,7 @@ if metode_input == "Upload File Excel/CSV":
                         "Jam Masuk": f"{m_jam:02d}:{m_menit:02d}",
                         "Jam Pulang": f"{p_jam:02d}:{p_menit:02d}",
                         "Total Jam Praktek": durasi_jam,
+                        "Kapasitas Pasien (Sesi)": kapasitas_sesi,
                         "Status": status_beban,
                         "Obj_Mulai": t_mulai_menit,
                         "Obj_Selesai": t_selesai_menit
@@ -121,6 +127,7 @@ else:
                 t_selesai_menit += 24 * 60
             durasi_menit = max(0, t_selesai_menit - t_mulai_menit)
             durasi_jam = round(durasi_menit / 60, 2)
+            kapasitas_sesi = int(durasi_menit / menit_per_pasien)
             status_beban = "Padat 🔴" if durasi_jam > 5 else "Normal 🟢"
 
             st.session_state.database_kehadiran.append({
@@ -130,6 +137,7 @@ else:
                 "Jam Masuk": input_mulai.strftime("%H:%M"),
                 "Jam Pulang": input_selesai.strftime("%H:%M"),
                 "Total Jam Praktek": durasi_jam,
+                "Kapasitas Pasien (Sesi)": kapasitas_sesi,
                 "Status": status_beban,
                 "Obj_Mulai": t_mulai_menit,
                 "Obj_Selesai": t_selesai_menit
@@ -166,51 +174,44 @@ if len(st.session_state.database_kehadiran) > 0:
     
     total_catatan = len(df_master)
     total_dokter_unik = df_master["Nama Dokter"].nunique()
-    total_akumulasi_jam = df_master["Total Jam Praktek"].sum()
+    total_jam_mingguan = df_master["Total Jam Praktek"].sum()
     
-    # --- KALKULASI LOGIKA RASIO & KAPASITAS 6 MENIT ---
-    # Kapasitas layanan per dokter berdasarkan jam kerja dan waktu per pasien (6 menit)
-    menit_kerja_harian = jam_kerja_harian * 60
-    kapasitas_pasien_per_hari_per_dokter = int(menit_kerja_harian / menit_per_pasien)
-    kapasitas_pasien_per_bulan_per_dokter = kapasitas_pasien_per_hari_per_dokter * hari_kerja_per_bulan
+    # Kalkulasi total kapasitas per bulan berdasarkan akumulasi jam praktek dikali minggu efektif
+    total_jam_bulanan = total_jam_mingguan * minggu_per_bulan
+    total_menit_bulanan = total_jam_bulanan * 60
+    total_kapasitas_pasien_bulanan = int(total_menit_bulanan / menit_per_pasien)
     
-    # Total kapasitas seluruh dokter terdaftar dalam sebulan
-    total_kapasitas_faskes = kapasitas_pasien_per_bulan_per_dokter * total_dokter_unik
+    st.markdown("### 🧮 Kalkulator Kapasitas Layanan Berdasarkan Jadwal Riil Dokter")
     
-    st.markdown("### 🧮 Kalkulator & Penjelasan Logika Rasio 1 : 5,000")
-    
-    # Kotak Informasi Interaktif (Expander / Box penjelasan)
-    with st.expander("ℹ️ Klik untuk melihat rincian rumus & asumsi standar 6 menit per pasien", expanded=True):
+    with st.expander("ℹ️ Penjelasan Rumus Berbasis Jam Praktek Aktual", expanded=True):
         st.markdown(f"""
-        * **Standar Pelayanan:** Ditetapkan **{menit_per_pasien} menit per pasien** (sesuai standar waktu konsultasi medis optimal di fasilitas primer).
-        * **Kapasitas 1 Dokter:** Dengan asumsi waktu kerja efektif **{jam_kerja_harian} jam/hari** ({menit_kerja_harian} menit) selama **{hari_kerja_per_bulan} hari/bulan**, maka 1 orang dokter mampu melayani maksimal **~{kapasitas_pasien_per_hari_per_dokter} pasien/hari** atau **~{kapasitas_pasien_per_bulan_per_dokter:,} pasien/bulan**.
-        * **Rasio JKN 1 : {standar_rasio:,}:** Angka ini dirancang agar beban kunjungan dari sejumlah peserta JKN tidak melampaui batas kapasitas layanan waktu dokter, sehingga mutu pelayanan tetap terjaga.
+        * **Jam Praktek Riil:** Sistem menghitung durasi jam masuk hingga jam pulang dari masing-masing sesi jadwal di Excel.
+        * **Standar Pelayanan:** **{menit_per_pasien} menit per pasien**.
+        * **Proyeksi Bulanan:** Total jam praktek mingguan dikalikan **{minggu_per_bulan} minggu** untuk memperkirakan total kapasitas layanan pasien faskes dalam sebulan penuh secara akurat.
         """)
 
-    # Metrik Evaluasi Rasio
+    # Metrik Evaluasi Rasio & Kapasitas
     col_j1, col_j2, col_j3, col_j4 = st.columns(4)
     with col_j1:
         st.metric(label="Total Peserta JKN", value=f"{jumlah_peserta_faskes:,} Jiwa")
     with col_j2:
         st.metric(label="Dokter Terdaftar", value=f"{total_dokter_unik} Dokter")
     with col_j3:
-        # Kebutuhan dokter ideal berdasarkan total peserta dibagi standar
-        dokter_ideal = round(jumlah_peserta_faskes / standar_rasio, 1)
-        st.metric(label="Kebutuhan Dokter Ideal", value=f"{dokter_ideal} Dokter")
+        st.metric(label="Estimasi Kapasitas Pasien/Bulan", value=f"~{total_kapasitas_pasien_bulanan:,} Pasien")
     with col_j4:
-        status_kecukupan = "Memenuhi Standar ✅" if total_dokter_unik >= dokter_ideal else "Kurang / Defisit ⚠️"
-        st.metric(label="Status Kapasitas Faskes", value=status_kecukupan)
+        # Jika kapasitas bulanan mencukupi target kunjungan JKN (asumsi 1 peserta berkunjung 1x per bulan atau standar proporsional)
+        status_kecukupan = "Kapasitas Memadai ✅" if total_kapasitas_pasien_bulanan >= jumlah_peserta_faskes else "Perlu Penambahan Jam ⚠️"
+        st.metric(label="Status Layanan", value=status_kecukupan)
 
     st.markdown("---")
 
-    # Metrik Ringkasan Utama
     col_c1, col_c2, col_c3 = st.columns(3)
     with col_c1:
         st.metric(label="Total Sesi Jadwal Tercatat", value=f"{total_catatan} Sesi")
     with col_c2:
-        st.metric(label="Akumulasi Jam Praktek", value=f"{total_akumulasi_jam:.1f} Jam")
+        st.metric(label="Akumulasi Jam Praktek (Mingguan)", value=f"{total_jam_mingguan:.1f} Jam")
     with col_c3:
-        st.metric(label="Estimasi Kapasitas Layanan Faskes", value=f"~{total_kapasitas_faskes:,} Pasien/Bulan")
+        st.metric(label="Rata-rata Jam per Dokter", value=f"{(total_jam_mingguan / total_dokter_unik):.1f} Jam/Minggu")
         
     st.markdown("### 🔍 Panel Filter & Pencarian Lanjutan")
     
@@ -239,10 +240,10 @@ if len(st.session_state.database_kehadiran) > 0:
             return row["Obj_Mulai"] <= target_menit <= row["Obj_Selesai"]
         df_tampil = df_tampil[df_tampil.apply(cek_sedang_praktek, axis=1)]
 
-    df_tampil_clean = df_tampil[["Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Total Jam Praktek", "Status"]].copy()
+    df_tampil_clean = df_tampil[["Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Total Jam Praktek", "Kapasitas Pasien (Sesi)", "Status"]].copy()
     df_tampil_clean.insert(0, "ID", df_tampil.index)
 
-    st.markdown(f"### 📋 Hasil Data Kehadiran ({len(df_tampil_clean)} Data Ditemukan)")
+    st.markdown(f"### 📋 Hasil Data Kehadiran & Kapasitas ({len(df_tampil_clean)} Data Ditemukan)")
     st.dataframe(df_tampil_clean, use_container_width=True)
     
     st.markdown("### 📊 Grafik Akumulasi Beban Jam Praktek per Dokter")
@@ -258,7 +259,7 @@ if len(st.session_state.database_kehadiran) > 0:
     st.download_button(
         label="Download Data ke CSV (Excel)",
         data=csv_master,
-        file_name='Laporan_Analisis_Beban_Kerja_JKN.csv',
+        file_name='Laporan_Kapasitas_Dokter_JKN.csv',
         mime='text/css',
     )
 else:
