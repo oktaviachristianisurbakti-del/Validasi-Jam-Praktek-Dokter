@@ -31,7 +31,6 @@ with col_m1:
 with col_m2:
     input_selesai = st.time_input("Jam Selesai Pulang", value=datetime.time(19, 0))
 
-# Fitur Tambahan: Detail Jam Istirahat
 ada_istirahat = st.sidebar.checkbox("Ada Jam Istirahat di Tengah Waktu?", value=True)
 
 input_istirahat_mulai = None
@@ -49,16 +48,18 @@ if st.sidebar.button("💾 Simpan ke Database"):
     if input_nama.strip() == "" or input_faskes.strip() == "":
         st.sidebar.error("Nama Dokter dan Faskes tidak boleh kosong!")
     else:
-        # Hitung total jam operasional kotor
         t_mulai_menit = input_mulai.hour * 60 + input_mulai.minute
-        t_selesai_menit = input_selesai.hour * 60 + input_selesai.minute
+        t_selesai_menit = input_selesai.hour * input_selesai.minute if False else (input_selesai.hour * 60 + input_selesai.minute)
         
         if t_selesai_menit < t_mulai_menit:
-            t_selesai_menit += 24 * 60 # Antisipasi lintas hari
+            t_selesai_menit += 24 * 60
             
         total_kotor_menit = t_selesai_menit - t_mulai_menit
         
-        # Hitung durasi istirahat jika ada
+        durasi_istirahat_menit = 0
+        i_mulai_menit = None
+        i_selesai_menit = None
+        
         if ada_istirahat and input_istirahat_mulai and input_istirahat_selesai:
             i_mulai_menit = input_istirahat_mulai.hour * 60 + input_istirahat_mulai.minute
             i_selesai_menit = input_istirahat_selesai.hour * 60 + input_istirahat_selesai.minute
@@ -69,10 +70,8 @@ if st.sidebar.button("💾 Simpan ke Database"):
             durasi_istirahat_jam = round(durasi_istirahat_menit / 60, 2)
             info_istirahat_str = f"{input_istirahat_mulai.strftime('%H:%M')} - {input_istirahat_selesai.strftime('%H:%M')} ({durasi_istirahat_jam} Jam)"
         else:
-            durasi_istirahat_menit = 0
             info_istirahat_str = "Tidak ada"
             
-        # Hitung durasi bersih praktek
         durasi_bersih_menit = max(0, total_kotor_menit - durasi_istirahat_menit)
         durasi_bersih_jam = round(durasi_bersih_menit / 60, 2)
         
@@ -87,17 +86,37 @@ if st.sidebar.button("💾 Simpan ke Database"):
             "Waktu Istirahat": info_istirahat_str,
             "Total Jam Praktek": durasi_bersih_jam,
             "Status": status_beban,
-            # Data objek helper untuk filter jam akurat
             "Obj_Mulai": t_mulai_menit,
             "Obj_Selesai": t_selesai_menit,
-            "Obj_Istirahat_Mulai": (i_mulai_menit if ada_istirahat else None),
-            "Obj_Istirahat_Selesai": (i_selesai_menit if ada_istirahat else None)
+            "Obj_Istirahat_Mulai": i_mulai_menit,
+            "Obj_Istirahat_Selesai": i_selesai_menit
         })
         st.sidebar.success(f"Berhasil merekam jadwal {input_nama}!")
 
-if st.sidebar.button("🗑️ Reset Semua Data"):
-    st.session_state.database_kehadiran = []
-    st.sidebar.warning("Database telah dibersihkan.")
+# --- FITUR HAPUS DATA DI SIDEBAR ---
+if len(st.session_state.database_kehadiran) > 0:
+    st.sidebar.markdown("---")
+    st.sidebar.header("🗑️ Hapus Data Salah Rekam")
+    
+    # Membuat daftar pilihan berdasarkan indeks dan ringkasan data
+    list_pilihan_hapus = [
+        f"ID {idx}: {item['Nama Dokter']} ({item['Hari']} - {item['Faskes']})"
+        for idx, item in enumerate(st.session_state.database_kehadiran)
+    ]
+    
+    data_terpilih_hapus = st.sidebar.selectbox("Pilih Data yang Akan Dihapus:", list_pilihan_hapus)
+    
+    if st.sidebar.button("❌ Hapus Data Terpilih"):
+        # Ambil indeks dari string pilihan (misal "ID 0: ...")
+        id_to_remove = int(data_terpilih_hapus.split(":")[0].replace("ID", "").strip())
+        st.session_state.database_kehadiran.pop(id_to_remove)
+        st.sidebar.success("Data berhasil dihapus!")
+        st.rerun()
+
+    if st.sidebar.button("⚠️ Hapus Seluruh Database"):
+        st.session_state.database_kehadiran = []
+        st.sidebar.warning("Semua data telah dibersihkan.")
+        st.rerun()
 
 # --- TAMPILAN UTAMA DASHBOARD MASTER ---
 st.markdown("---")
@@ -153,21 +172,19 @@ if len(st.session_state.database_kehadiran) > 0:
             i_m = row["Obj_Istirahat_Mulai"]
             i_s = row["Obj_Istirahat_Selesai"]
             
-            # Cek apakah berada di rentang jam operasional
             dalam_rentang = (m <= target_menit <= s)
             
-            # Jika masuk dalam rentang, cek apakah pas jam istirahat
             if dalam_rentang and i_m is not None and i_s is not None:
                 sedang_istirahat = (i_m <= target_menit <= i_s)
                 if sedang_istirahat:
-                    return False # Tidak aktif praktek karena sedang istirahat
+                    return False
             return dalam_rentang
                 
         df_tampil = df_tampil[df_tampil.apply(cek_sedang_praktek, axis=1)]
 
-    # Sembunyikan kolom objek helper sebelum ditampilkan
-    kolom_tampil = ["Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Waktu Istirahat", "Total Jam Praktek", "Status"]
-    df_tampil_clean = df_tampil[kolom_tampil]
+    # Kolom yang akan ditampilkan (ditambahkan nomor ID baris agar jelas)
+    df_tampil_clean = df_tampil[["Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Waktu Istirahat", "Total Jam Praktek", "Status"]].copy()
+    df_tampil_clean.insert(0, "ID", df_tampil.index)
 
     st.markdown(f"### 📋 Hasil Data Kehadiran ({len(df_tampil_clean)} Data Ditemukan)")
     st.dataframe(df_tampil_clean, use_container_width=True)
