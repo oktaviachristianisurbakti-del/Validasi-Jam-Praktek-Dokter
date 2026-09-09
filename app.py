@@ -24,6 +24,7 @@ if metode_input == "Upload File Excel/CSV":
     st.sidebar.subheader("📤 Upload Jadwal Massal")
     st.sidebar.markdown("""
     **Format Kolom File Excel:**
+    Pastikan baris pertama excel Anda berisi kolom:
     * `Nama Dokter`
     * `Hari`
     * `Faskes`
@@ -40,25 +41,39 @@ if metode_input == "Upload File Excel/CSV":
             else:
                 df_upload = pd.read_excel(uploaded_file)
                 
+            # Bersihkan nama kolom dari spasi tersembunyi agar tidak error
+            df_upload.columns = df_upload.columns.str.strip()
+                
             if st.sidebar.button("📥 Proses & Masukkan ke Database"):
                 count_sukses = 0
                 for _, row in df_upload.iterrows():
-                    nama = str(row.get("Nama Dokter", "")).strip()
+                    # Ambil data dengan pencarian kolom yang fleksibel
+                    nama = str(row.get("Nama Dokter", row.get("Nama", ""))).strip()
                     hari = str(row.get("Hari", "Senin")).strip()
-                    faskes = str(row.get("Faskes", "")).strip()
+                    faskes = str(row.get("Faskes", row.get("Klinik", ""))).strip()
                     
                     if not nama or nama == "nan" or not faskes or faskes == "nan":
                         continue
                         
-                    j_masuk_str = str(row.get("Jam Masuk", "08:00")).strip()
-                    j_pulang_str = str(row.get("Jam Pulang", "16:00")).strip()
+                    j_masuk_raw = row.get("Jam Masuk", row.get("Mulai", "08:00"))
+                    j_pulang_raw = row.get("Jam Pulang", row.get("Selesai", "16:00"))
                     
-                    try:
-                        m_jam, m_menit = map(int, j_masuk_str.split(':'))
-                        p_jam, p_menit = map(int, j_pulang_str.split(':'))
-                    except:
-                        m_jam, m_menit = 8, 0
-                        p_jam, p_menit = 16, 0
+                    # Tangani jika format waktu terbaca sebagai jam/waktu oleh pandas
+                    if isinstance(j_masuk_raw, datetime.time):
+                        m_jam, m_menit = j_masuk_raw.hour, j_masuk_raw.minute
+                    else:
+                        try:
+                            m_jam, m_menit = map(int, str(j_masuk_raw).strip().split(':')[:2])
+                        except:
+                            m_jam, m_menit = 8, 0
+                            
+                    if isinstance(j_pulang_raw, datetime.time):
+                        p_jam, p_menit = j_pulang_raw.hour, j_pulang_raw.minute
+                    else:
+                        try:
+                            p_jam, p_menit = map(int, str(j_pulang_raw).strip().split(':')[:2])
+                        except:
+                            p_jam, p_menit = 16, 0
                         
                     t_mulai_menit = m_jam * 60 + m_menit
                     t_selesai_menit = p_jam * 60 + p_menit
@@ -130,6 +145,13 @@ else:
 if len(st.session_state.database_kehadiran) > 0:
     st.sidebar.markdown("---")
     st.sidebar.header("🗑️ Kelola Database")
+    
+    # Tombol hapus seluruh database dulu agar bisa re-upload file bersih
+    if st.sidebar.button("⚠️ Hapus Seluruh Database (Reset)"):
+        st.session_state.database_kehadiran = []
+        st.sidebar.warning("Database dibersihkan. Silakan upload ulang file Excel Anda.")
+        st.rerun()
+
     list_pilihan_hapus = [
         f"ID {idx}: {item['Nama Dokter']} ({item['Hari']} | {item['Jam Masuk']}-{item['Jam Pulang']})"
         for idx, item in enumerate(st.session_state.database_kehadiran)
@@ -140,11 +162,6 @@ if len(st.session_state.database_kehadiran) > 0:
         id_to_remove = int(data_terpilih_hapus.split(":")[0].replace("ID", "").strip())
         st.session_state.database_kehadiran.pop(id_to_remove)
         st.sidebar.success("Data berhasil dihapus!")
-        st.rerun()
-
-    if st.sidebar.button("⚠️ Hapus Seluruh Database"):
-        st.session_state.database_kehadiran = []
-        st.sidebar.warning("Database dibersihkan.")
         st.rerun()
 
 # --- DASHBOARD UTAMA ---
@@ -215,4 +232,4 @@ if len(st.session_state.database_kehadiran) > 0:
         mime='text/csv',
     )
 else:
-    st.info("ℹ️ Belum ada data. Silakan upload file Excel atau gunakan form manual di sebelah kiri.")
+    st.info("ℹ️ Belum ada data. Silakan klik **Hapus Seluruh Database (Reset)** di sidebar kiri, lalu upload ulang file Excel Anda.")
