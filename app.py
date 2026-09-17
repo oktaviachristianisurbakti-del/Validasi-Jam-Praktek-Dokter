@@ -12,7 +12,7 @@ if 'database_kehadiran' not in st.session_state:
 
 # Judul Aplikasi
 st.title("🏥 Dashboard Analisis Beban Kerja, Rasio JKN & Kebutuhan Poli")
-st.markdown("Pusat monitoring kehadiran tenaga medis berbasis analisis kesenjangan (*Gap Analysis*) dan deteksi kebutuhan unit poli simultan.")
+st.markdown("Pusat monitoring kehadiran tenaga medis dengan validasi kesatuan hari (*agregasi harian*), konversi FTE, dan deteksi poli simultan.")
 
 # --- GENERATE PILIHAN PERIODE BULAN ---
 def generate_periode_list():
@@ -40,6 +40,10 @@ st.sidebar.header("⚙️ Pengaturan Standar & Kapasitas")
 jumlah_peserta_faskes = st.sidebar.number_input("Total Peserta JKN (Default/Global):", min_value=500, max_value=500000, value=7873, step=500)
 standar_rasio = st.sidebar.number_input("Standar Target Rasio JKN:", min_value=1000, max_value=10000, value=5000, step=500)
 standar_jam_fulltime_mingguan = st.sidebar.number_input("Standar Jam Full-Time / Minggu:", min_value=20, max_value=50, value=40)
+
+# Pilihan Batas Maksimal Jam Harian
+sistem_hari_kerja = st.sidebar.selectbox("Batas Maksimal Jam per Hari:", ["8 Jam / Hari (Standar 5 Hari Kerja)", "7 Jam / Hari (Standar 6 Hari Kerja)"])
+max_jam_harian = 8 if "8 Jam" in sistem_hari_kerja else 7
 
 st.sidebar.markdown("---")
 st.sidebar.header("📁 Metode Input Data")
@@ -98,7 +102,6 @@ if metode_input == "Upload File Excel/CSV":
                         
                     durasi_menit = max(0, t_selesai_menit - t_mulai_menit)
                     durasi_jam = round(durasi_menit / 60, 2)
-                    status_beban = "Normal 🟢" if durasi_jam <= 8 else "Lebih Batas Harian ⚠️"
                     
                     st.session_state.database_kehadiran.append({
                         "Periode": periode,
@@ -108,7 +111,6 @@ if metode_input == "Upload File Excel/CSV":
                         "Jam Masuk": f"{m_jam:02d}:{m_menit:02d}",
                         "Jam Pulang": f"{p_jam:02d}:{p_menit:02d}",
                         "Total Jam Praktek": durasi_jam,
-                        "Status Sesi": status_beban,
                         "Obj_Mulai": t_mulai_menit,
                         "Obj_Selesai": t_selesai_menit
                     })
@@ -144,7 +146,6 @@ else:
                 t_selesai_menit += 24 * 60
             durasi_menit = max(0, t_selesai_menit - t_mulai_menit)
             durasi_jam = round(durasi_menit / 60, 2)
-            status_beban = "Normal 🟢" if durasi_jam <= 8 else "Lebih Batas Harian ⚠️"
 
             st.session_state.database_kehadiran.append({
                 "Periode": input_periode,
@@ -154,7 +155,6 @@ else:
                 "Jam Masuk": input_mulai.strftime("%H:%M"),
                 "Jam Pulang": input_selesai.strftime("%H:%M"),
                 "Total Jam Praktek": durasi_jam,
-                "Status Sesi": status_beban,
                 "Obj_Mulai": t_mulai_menit,
                 "Obj_Selesai": t_selesai_menit
             })
@@ -215,6 +215,22 @@ if len(st.session_state.database_kehadiran) > 0:
     if filter_hari != "Semua Hari":
         df_tampil = df_tampil[df_tampil["Hari"] == filter_hari]
 
+    # --- AGREGASI HARIAN: HITUNG TOTAL JAM PER DOKTER PER HARI SEBAGAI SATU KESATUAN ---
+    # Buat salinan untuk mengevaluasi total jam harian gabungan
+    if not df_tampil.empty:
+        # Hitung total jam per dokter per hari per faskes per periode
+        df_harian_gabungan = df_tampil.groupby(["Periode", "Faskes", "Nama Dokter", "Hari"])["Total Jam Praktek"].sum().reset_index()
+        df_harian_gabungan.rename(columns={"Total Jam Praktek": "Total Jam Harian"}, inplace=True)
+        
+        # Gabungkan kembali status harian ke dataframe utama
+        df_tampil = pd.merge(df_tampil, df_harian_gabungan, on=["Periode", "Faskes", "Nama Dokter", "Hari"], how="left")
+        
+        # Status sesi/hari dinilai dari total jam harian yang digabung
+        df_tampil["Status Sesi"] = df_tampil["Total Jam Harian"].apply(lambda x: "Normal 🟢" if x <= max_jam_harian else "Lebih Batas Harian ⚠️")
+    else:
+        df_tampil["Total Jam Harian"] = 0
+        df_tampil["Status Sesi"] = "Normal 🟢"
+
     # --- DINAMIS JUMLAH PESERTA BERDASARKAN FILTER FASKES ---
     peserta_aktif = jumlah_peserta_faskes
     if filter_faskes != "Semua Faskes":
@@ -226,11 +242,9 @@ if len(st.session_state.database_kehadiran) > 0:
     headcount_filter = df_tampil["Nama Dokter"].nunique()
     fte_filter = round(total_jam_filter / standar_jam_fulltime_mingguan, 2)
     
-    # 1. Rasio Berdasarkan Headcount (Orang Fisik): Peserta / Headcount
     rasio_headcount_val = int(round(peserta_aktif / headcount_filter)) if headcount_filter > 0 else 0
     str_rasio_headcount = f"1 : {rasio_headcount_val:,}"
 
-    # 2. Rasio Berdasarkan Tenaga Riil (FTE): Peserta / FTE
     rasio_fte_val = int(round(peserta_aktif / fte_filter)) if fte_filter > 0 else 0
     str_rasio_fte = f"1 : {rasio_fte_val:,}"
 
@@ -261,16 +275,14 @@ if len(st.session_state.database_kehadiran) > 0:
     st.markdown("---")
     st.markdown(f"### 📊 Analisis Rasio JKN & Kapasitas Riil (*Gap Analysis*)")
 
-    # Baris Metrik Pertama (Menampilkan Angka Rasio 1 : Sekian)
     col_r1, col_r2, col_r3 = st.columns(3)
     with col_r1:
-        st.metric(label="Rasio Headcount (Berdasarkan Orang)", value=str_rasio_headcount, help="Contoh: 7.873 peserta dibagi 4 orang dokter fisik = 1 : 1.968")
+        st.metric(label="Rasio Headcount (Berdasarkan Orang)", value=str_rasio_headcount)
     with col_r2:
-        st.metric(label="Rasio FTE (Berdasarkan Jam Kerja Riil)", value=str_rasio_fte, help="Angka akurat: Peserta dibagi dengan total jam kerja setara dokter penuh.")
+        st.metric(label="Rasio FTE (Berdasarkan Jam Kerja Riil)", value=str_rasio_fte)
     with col_r3:
         st.metric(label="Target Standar Rasio JKN", value=f"1 : {standar_rasio:,}")
 
-    # Baris Metrik Kedua (Evaluasi Tenaga)
     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
     with col_f1:
         st.metric(label="Jumlah Orang (Headcount)", value=f"{headcount_filter} Orang")
@@ -311,10 +323,10 @@ if len(st.session_state.database_kehadiran) > 0:
         st.metric(label="Rata-rata Jam per Dokter", value=f"{(total_jam_filter / headcount_filter if headcount_filter > 0 else 0):.1f} Jam")
 
     # --- TABEL UTAMA ---
-    df_tampil_clean = df_tampil[["Periode", "Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Total Jam Praktek", "Status Sesi"]].copy()
+    df_tampil_clean = df_tampil[["Periode", "Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Total Jam Praktek", "Total Jam Harian", "Status Sesi"]].copy()
     df_tampil_clean.insert(0, "ID", df_tampil.index)
 
-    st.markdown(f"### 📋 Rincian Jadwal ({len(df_tampil_clean)} Data Ditemukan)")
+    st.markdown(f"### 📋 Rincian Jadwal (Evaluasi Kesatuan Hari) ({len(df_tampil_clean)} Data Ditemukan)")
     st.dataframe(df_tampil_clean, use_container_width=True)
     
     st.markdown("### 📊 Grafik Akumulasi Jam Praktek per Dokter")
@@ -346,7 +358,7 @@ RINGKASAN RASIO & KAPASITAS:
 - Kebutuhan Unit Poli Simultan    : Minimal {max_poli_simultan} Unit Poli Aktif
 
 ==================================================
-RINCIAN JADWAL PRAKTEK:
+RINCIAN JADWAL PRAKTEK (DENGAN AGREGASI HARIAN):
 """
     csv_tabel = df_tampil_clean.to_csv(index=False)
     laporan_final = ringkasan_laporan + "\n" + csv_tabel
