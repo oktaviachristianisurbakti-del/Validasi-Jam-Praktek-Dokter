@@ -12,7 +12,7 @@ if 'database_kehadiran' not in st.session_state:
 
 # Judul Aplikasi
 st.title("🏥 Dashboard Analisis Beban Kerja, Rasio JKN & Kebutuhan Poli")
-st.markdown("Pusat monitoring kehadiran tenaga medis dengan validasi kesatuan hari (*agregasi harian*), konversi FTE, dan deteksi poli simultan.")
+st.markdown("Pusat monitoring kehadiran tenaga medis dengan penggabungan baris hari yang sama, konversi FTE, dan deteksi poli simultan.")
 
 # --- GENERATE PILIHAN PERIODE BULAN ---
 def generate_periode_list():
@@ -40,10 +40,6 @@ st.sidebar.header("⚙️ Pengaturan Standar & Kapasitas")
 jumlah_peserta_faskes = st.sidebar.number_input("Total Peserta JKN (Default/Global):", min_value=500, max_value=500000, value=7873, step=500)
 standar_rasio = st.sidebar.number_input("Standar Target Rasio JKN:", min_value=1000, max_value=10000, value=5000, step=500)
 standar_jam_fulltime_mingguan = st.sidebar.number_input("Standar Jam Full-Time / Minggu:", min_value=20, max_value=50, value=40)
-
-# Pilihan Batas Maksimal Jam Harian
-sistem_hari_kerja = st.sidebar.selectbox("Batas Maksimal Jam per Hari:", ["8 Jam / Hari (Standar 5 Hari Kerja)", "7 Jam / Hari (Standar 6 Hari Kerja)"])
-max_jam_harian = 8 if "8 Jam" in sistem_hari_kerja else 7
 
 st.sidebar.markdown("---")
 st.sidebar.header("📁 Metode Input Data")
@@ -215,21 +211,19 @@ if len(st.session_state.database_kehadiran) > 0:
     if filter_hari != "Semua Hari":
         df_tampil = df_tampil[df_tampil["Hari"] == filter_hari]
 
-    # --- AGREGASI HARIAN: HITUNG TOTAL JAM PER DOKTER PER HARI SEBAGAI SATU KESATUAN ---
-    # Buat salinan untuk mengevaluasi total jam harian gabungan
+    # --- PENGGABUNGAN HARI YANG SAMA (AGREGASI HARIAN PER DOKTER) ---
+    # Agar hari yang sama (misal Rabu pagi & Rabu malam) digabung menjadi 1 baris dengan total jam ditotal
     if not df_tampil.empty:
-        # Hitung total jam per dokter per hari per faskes per periode
-        df_harian_gabungan = df_tampil.groupby(["Periode", "Faskes", "Nama Dokter", "Hari"])["Total Jam Praktek"].sum().reset_index()
-        df_harian_gabungan.rename(columns={"Total Jam Praktek": "Total Jam Harian"}, inplace=True)
+        df_tabel_bersih = df_tampil.groupby(["Periode", "Faskes", "Nama Dokter", "Hari"]).agg({
+            "Total Jam Praktek": "sum",
+            "Obj_Mulai": "min",
+            "Obj_Selesai": "max"
+        }).reset_index()
         
-        # Gabungkan kembali status harian ke dataframe utama
-        df_tampil = pd.merge(df_tampil, df_harian_gabungan, on=["Periode", "Faskes", "Nama Dokter", "Hari"], how="left")
-        
-        # Status sesi/hari dinilai dari total jam harian yang digabung
-        df_tampil["Status Sesi"] = df_tampil["Total Jam Harian"].apply(lambda x: "Normal 🟢" if x <= max_jam_harian else "Lebih Batas Harian ⚠️")
+        # Format status sesi normal
+        df_tabel_bersih["Status Sesi"] = df_tabel_bersih["Total Jam Praktek"].apply(lambda x: "Normal 🟢" if x <= 8 else "Padat 🔴")
     else:
-        df_tampil["Total Jam Harian"] = 0
-        df_tampil["Status Sesi"] = "Normal 🟢"
+        df_tabel_bersih = pd.DataFrame()
 
     # --- DINAMIS JUMLAH PESERTA BERDASARKAN FILTER FASKES ---
     peserta_aktif = jumlah_peserta_faskes
@@ -238,7 +232,8 @@ if len(st.session_state.database_kehadiran) > 0:
         peserta_aktif = st.number_input(f"Masukkan Total Peserta JKN untuk {filter_faskes}:", min_value=100, max_value=500000, value=jumlah_peserta_faskes, step=500)
 
     # --- KALKULASI FTE & RASIO (1 : Sekian) ---
-    total_jam_filter = df_tampil["Total Jam Praktek"].sum()
+    # Total jam praktek dihitung dari data gabungan harian agar akurat
+    total_jam_filter = df_tabel_bersih["Total Jam Praktek"].sum() if not df_tabel_bersih.empty else 0
     headcount_filter = df_tampil["Nama Dokter"].nunique()
     fte_filter = round(total_jam_filter / standar_jam_fulltime_mingguan, 2)
     
@@ -255,7 +250,7 @@ if len(st.session_state.database_kehadiran) > 0:
 
     status_evaluasi_keseluruhan = "Memadai ✅" if fte_filter >= dokter_ideal_jkn else "Defisit Tenaga (Kurang) ⚠️"
 
-    # Deteksi Kebutuhan Poli Simultan
+    # Deteksi Kebutuhan Poli Simultan (menggunakan data mentah awal agar presisi per menit)
     max_poli_simultan = 1
     if not df_tampil.empty:
         for h in df_tampil["Hari"].unique():
@@ -313,20 +308,20 @@ if len(st.session_state.database_kehadiran) > 0:
 
     st.markdown("---")
     
-    total_catatan = len(df_tampil)
+    total_catatan = len(df_tabel_bersih)
     col_c1, col_c2, col_c3 = st.columns(3)
     with col_c1:
-        st.metric(label="Total Sesi Terpilih", value=f"{total_catatan} Sesi")
+        st.metric(label="Total Baris Jadwal", value=f"{total_catatan} Baris")
     with col_c2:
         st.metric(label="Akumulasi Jam Praktek", value=f"{total_jam_filter:.1f} Jam")
     with col_c3:
         st.metric(label="Rata-rata Jam per Dokter", value=f"{(total_jam_filter / headcount_filter if headcount_filter > 0 else 0):.1f} Jam")
 
-    # --- TABEL UTAMA ---
-    df_tampil_clean = df_tampil[["Periode", "Hari", "Nama Dokter", "Faskes", "Jam Masuk", "Jam Pulang", "Total Jam Praktek", "Total Jam Harian", "Status Sesi"]].copy()
-    df_tampil_clean.insert(0, "ID", df_tampil.index)
+    # --- TABEL UTAMA (TAMPILAN BERSIH TANPA HARI DOUBLE) ---
+    df_tampil_clean = df_tabel_bersih[["Periode", "Hari", "Nama Dokter", "Faskes", "Total Jam Praktek", "Status Sesi"]].copy()
+    df_tampil_clean.insert(0, "ID", range(1, len(df_tampil_clean) + 1))
 
-    st.markdown(f"### 📋 Rincian Jadwal (Evaluasi Kesatuan Hari) ({len(df_tampil_clean)} Data Ditemukan)")
+    st.markdown(f"### 📋 Rincian Jadwal (Hari Tergabung Rapi) ({len(df_tampil_clean)} Data Ditemukan)")
     st.dataframe(df_tampil_clean, use_container_width=True)
     
     st.markdown("### 📊 Grafik Akumulasi Jam Praktek per Dokter")
@@ -358,7 +353,7 @@ RINGKASAN RASIO & KAPASITAS:
 - Kebutuhan Unit Poli Simultan    : Minimal {max_poli_simultan} Unit Poli Aktif
 
 ==================================================
-RINCIAN JADWAL PRAKTEK (DENGAN AGREGASI HARIAN):
+RINCIAN JADWAL PRAKTEK (HARI DIGABUNG UTUH):
 """
     csv_tabel = df_tampil_clean.to_csv(index=False)
     laporan_final = ringkasan_laporan + "\n" + csv_tabel
